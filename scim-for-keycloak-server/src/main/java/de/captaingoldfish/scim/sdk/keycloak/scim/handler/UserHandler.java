@@ -47,6 +47,12 @@ import de.captaingoldfish.scim.sdk.server.endpoints.ResourceHandler;
 import de.captaingoldfish.scim.sdk.server.filter.FilterNode;
 import de.captaingoldfish.scim.sdk.server.response.PartialListResponse;
 import lombok.extern.slf4j.Slf4j;
+// LIGHTRUN SCIM POC CHANGES START
+import org.keycloak.models.GroupModel;
+import de.captaingoldfish.scim.sdk.keycloak.provider.DeploymentUtils;
+import java.util.Arrays;
+import org.keycloak.models.RoleModel;
+// LIGHTRUN SCIM POC CHANGES END
 
 
 /**
@@ -59,6 +65,59 @@ public class UserHandler extends ResourceHandler<User>
 {
 
   public static final String PRIMARY_SUFFIX = "_primary";
+
+  // LIGHTRUN SCIM POC CHANGES START
+  public static final String DEFAULT_ROLE = "ROLE_USER";
+
+  public static final List<String> ALLOWED_ROLES = Arrays.asList("ROLE_MANAGER");
+
+  private GroupModel getGroup(ScimKeycloakContext context)
+  {
+    return context.getKeycloakSession()
+                  .getContext()
+                  .getRealm()
+                  .getTopLevelGroupsStream()
+                  .filter(group -> group.getName().equalsIgnoreCase(new DeploymentUtils().getAutoJoinCompany()))
+                  .findAny()
+                  .orElseThrow(() -> new IllegalStateException("Unable to find auto join company "
+                                                               + new DeploymentUtils().getAutoJoinCompany()));
+  }
+
+  private List<RoleModel> getRoles(ScimKeycloakContext context, List<PersonRole> personRoles)
+  {
+    List<RoleModel> roles = personRoles.stream()
+                                       .map(role -> role.getValue())
+                                       .filter(Optional::isPresent)
+                                       .map(Optional::get)
+                                       .filter(roleName -> ALLOWED_ROLES.contains(roleName))
+                                       .map(roleName -> context.getKeycloakSession()
+                                                               .getContext()
+                                                               .getRealm()
+                                                               .getRole(roleName))
+                                       .collect(Collectors.toList());
+    RoleModel defaultRole = context.getKeycloakSession().getContext().getRealm().getRole(DEFAULT_ROLE);
+    roles.add(defaultRole);
+    return roles;
+  }
+
+  private void grantRoles(ScimKeycloakContext context, UserModel userModel, User user)
+  {
+    List<RoleModel> roles = getRoles(context, user.getRoles());
+    List<RoleModel> userRoles = userModel.getRoleMappingsStream().collect(Collectors.toList());
+    userRoles.forEach(role -> {
+      if (!roles.contains(role))
+      {
+        userModel.deleteRoleMapping(role);
+      }
+    });
+    roles.forEach(role -> {
+      if (!userModel.hasRole(role))
+      {
+        userModel.grantRole(role);
+      }
+    });
+  }
+  // LIGHTRUN SCIM POC CHANGES END
 
   /**
    * {@inheritDoc}
@@ -74,9 +133,23 @@ public class UserHandler extends ResourceHandler<User>
     }
     UserModel userModel = keycloakSession.users().addUser(keycloakSession.getContext().getRealm(), username);
     userModel = userToModel(user, userModel);
+    // LIGHTRUN SCIM POC CHANGES START
+    userModel.setSingleAttribute("LastModifiedDate", String.valueOf(Instant.now()));
+    userModel.setSingleAttribute("CreatedBy", "scim");
+    userModel.setSingleAttribute("LastModifiedBy", "scim");
+    GroupModel defaultGroup = getGroup((ScimKeycloakContext)context);
+    userModel.joinGroup(defaultGroup);
+    grantRoles((ScimKeycloakContext)context, userModel, user);
+    // LIGHTRUN SCIM POC CHANGES END
     if (isChangePasswordSupported() && user.getPassword().isPresent())
     {
       setPassword(keycloakSession, user.getPassword().get(), userModel);
+      // LIGHTRUN SCIM POC CHANGES START
+    }
+    else
+    {
+      userModel.setSingleAttribute("PasswordChanged", "false");
+      // LIGHTRUN SCIM POC CHANGES END
     }
     User newUser = modelToUser(userModel);
     {
@@ -150,6 +223,11 @@ public class UserHandler extends ResourceHandler<User>
     }
     userModel = userToModel(userToUpdate, userModel);
     userModel.setSingleAttribute(AttributeNames.RFC7643.LAST_MODIFIED, String.valueOf(Instant.now().toEpochMilli()));
+    // LIGHTRUN SCIM POC CHANGES START
+    userModel.setSingleAttribute("LastModifiedDate", String.valueOf(Instant.now()));
+    userModel.setSingleAttribute("LastModifiedBy", "scim");
+    grantRoles((ScimKeycloakContext)context, userModel, userToUpdate);
+    // LIGHTRUN SCIM POC CHANGES END
     User user = modelToUser(userModel);
     {
       ScimAdminEventBuilder adminEventAuditer = ((ScimKeycloakContext)context).getAdminEventAuditer();
@@ -203,6 +281,9 @@ public class UserHandler extends ResourceHandler<User>
     try
     {
       credentialManager.updateCredential(realm, userModel, userCredential);
+      // LIGHTRUN SCIM POC CHANGES START
+      userModel.setSingleAttribute("PasswordChanged", "true");
+      // LIGHTRUN SCIM POC CHANGES END
     }
     catch (ModelException ex)
     {
@@ -245,6 +326,9 @@ public class UserHandler extends ResourceHandler<User>
     userModel.setSingleAttribute(AttributeNames.RFC7643.PREFERRED_LANGUAGE, user.getPreferredLanguage().orElse(null));
     userModel.setSingleAttribute(AttributeNames.RFC7643.TIMEZONE, user.getTimezone().orElse(null));
     userModel.setSingleAttribute(AttributeNames.RFC7643.PROFILE_URL, user.getProfileUrl().orElse(null));
+    // LIGHTRUN SCIM POC CHANGES START
+    userModel.setSingleAttribute("LanguageKey", user.getLocale().orElse("en"));
+    // LIGHTRUN SCIM POC CHANGES END
 
     user.getEmails()
         .stream()
