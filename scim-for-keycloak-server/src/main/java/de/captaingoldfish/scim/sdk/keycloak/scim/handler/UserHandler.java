@@ -127,6 +127,7 @@ public class UserHandler extends ResourceHandler<User>
   {
     KeycloakSession keycloakSession = ((ScimKeycloakContext)context).getKeycloakSession();
     final String username = user.getUserName().get();
+    final String clientId = context.getAuthorization().getClientId();
     if (keycloakSession.users().getUserByUsername(keycloakSession.getContext().getRealm(), username) != null)
     {
       throw new ConflictException("the username '" + username + "' is already taken");
@@ -135,8 +136,8 @@ public class UserHandler extends ResourceHandler<User>
     userModel = userToModel(user, userModel);
     // LIGHTRUN SCIM POC CHANGES START
     userModel.setSingleAttribute("LastModifiedDate", String.valueOf(Instant.now()));
-    userModel.setSingleAttribute("CreatedBy", "scim");
-    userModel.setSingleAttribute("LastModifiedBy", "scim");
+    userModel.setSingleAttribute("CreatedBy", clientId);
+    userModel.setSingleAttribute("LastModifiedBy", clientId);
     GroupModel defaultGroup = getGroup((ScimKeycloakContext)context);
     userModel.joinGroup(defaultGroup);
     grantRoles((ScimKeycloakContext)context, userModel, user);
@@ -213,6 +214,7 @@ public class UserHandler extends ResourceHandler<User>
     UserModel userModel = keycloakSession.users()
                                          .getUserById(keycloakSession.getContext().getRealm(),
                                                       userToUpdate.getId().get());
+    final String clientId = context.getAuthorization().getClientId();
     if (userModel == null)
     {
       return null; // causes a resource not found exception you may also throw it manually
@@ -225,7 +227,7 @@ public class UserHandler extends ResourceHandler<User>
     userModel.setSingleAttribute(AttributeNames.RFC7643.LAST_MODIFIED, String.valueOf(Instant.now().toEpochMilli()));
     // LIGHTRUN SCIM POC CHANGES START
     userModel.setSingleAttribute("LastModifiedDate", String.valueOf(Instant.now()));
-    userModel.setSingleAttribute("LastModifiedBy", "scim");
+    userModel.setSingleAttribute("LastModifiedBy", clientId);
     grantRoles((ScimKeycloakContext)context, userModel, userToUpdate);
     // LIGHTRUN SCIM POC CHANGES END
     User user = modelToUser(userModel);
